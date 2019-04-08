@@ -24,19 +24,18 @@
         <div class="info-label"><!-- --></div>
 
         <script id="mandelbrot-vertex" type="x-shader/x-vertex">
-            precision highp float;
-            uniform float zoom;
-            uniform vec2 translate;
             varying vec2 pos;
 
             void main () {
-                pos = position.xy * zoom + translate;
+                pos = position.xy * 2.0;
                 gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
             }
         </script>
 
         <script id="mandelbrot-fragment" type="x-shader/x-fragment">
-            precision highp float;
+            uniform float time;
+            uniform float kzoom;
+            uniform vec2 ktranslate;
             varying vec2 pos;
             const int MAXITER = 1000;
 
@@ -47,23 +46,30 @@
                 return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
             }
 
+            float rand(in vec2 co) {
+                return fract(sin(dot(co.xy ,vec2(12.9898,78.233))) * 43758.5453);
+            }
+
             void main () {
-                vec2 fractal = pos;
+                vec2 _pos = pos * kzoom + ktranslate;
+                vec2 fractal = _pos;
                 vec4 color;
 
                 bool diverged = false;
                 for (int i = 0; i < MAXITER; i++) {
-                    fractal = pos + vec2(
-                        fractal.x * fractal.x - fractal.y * fractal.y,
+
+                    float sq_X = fractal.x * fractal.x;
+                    float sq_Y = fractal.y * fractal.y;
+
+                    fractal = _pos + vec2(
+                        sq_X - sq_Y,
                         2.0 * fractal.x * fractal.y
                     );
 
                     float nsmooth = (float(i) + 1.0 + log(length(fractal))) / float(MAXITER);
-                    // interpolate fractal color over position
                     color = vec4(hsv2rgb(vec3(nsmooth, 1.0, 0.5)), 1);
 
-                    // if outside of fractal, use black
-                    if (length(fractal) > 1.5) {
+                    if (sq_X + sq_Y > 4.0) {
                         diverged = true;
                         break;
                     }
@@ -93,8 +99,9 @@
             var geometry = new THREE.PlaneGeometry(2, 2, 0);
             var material = new THREE.ShaderMaterial({
                 uniforms: {
-                    zoom: {type: 'f', value: 2.0},
-                    translate: {type: 'vec2', value: new THREE.Vector2(0.0, 0.0)}
+                    time: {type: 'f', value: 0.0},
+                    kzoom: {type: 'f', value: 2.0},
+                    ktranslate: {type: 'vec2', value: new THREE.Vector2(0.0, 0.0)}
                 },
                 vertexShader: document.getElementById('mandelbrot-vertex').innerHTML,
                 fragmentShader: document.getElementById('mandelbrot-fragment').innerHTML
@@ -122,21 +129,21 @@
             function onDocumentMouseDown(e) {
                 isMouseDown = true;
                 dragPosition = [
-                    e.pageX / window.innerWidth * pan_speed * material.uniforms.zoom.value,
-                    e.pageY / window.innerHeight * pan_speed * material.uniforms.zoom.value
+                    e.pageX / window.innerWidth * pan_speed * material.uniforms.kzoom.value,
+                    e.pageY / window.innerHeight * pan_speed * material.uniforms.kzoom.value
                 ];
-                _translate = material.uniforms.translate.value;
+                _translate = material.uniforms.ktranslate.value;
             }
             function onDocumentMouseMove(e) {
                 if (isMouseDown) {
                     var _position = [
-                        e.pageX / window.innerWidth * pan_speed * material.uniforms.zoom.value,
-                        e.pageY / window.innerHeight * pan_speed * material.uniforms.zoom.value
+                        e.pageX / window.innerWidth * pan_speed * material.uniforms.kzoom.value,
+                        e.pageY / window.innerHeight * pan_speed * material.uniforms.kzoom.value
                     ];
                     var _delta = new THREE.Vector2(-(_position[0] - dragPosition[0]), _position[1] - dragPosition[1]);
                     var translateNew = _translate.clone();
 
-                    material.uniforms.translate.value = translateNew.add(_delta);
+                    material.uniforms.ktranslate.value = translateNew.add(_delta);
                 }
             }
             function onDocumentMouseUp(e) {
@@ -145,7 +152,7 @@
                 _translate = null;
             }
             function onDocumentMouseWheel(e) {
-                zoomAccelerationInc = material.uniforms.zoom.value * 0.35;
+                zoomAccelerationInc = material.uniforms.kzoom.value * 0.35;
                 zoomAcceleration = -sign(e.wheelDeltaY) * zoomAccelerationInc;
             }
 
@@ -159,6 +166,7 @@
                 requestAnimationFrame(render);
 
                 if (time) {
+                    material.uniforms.time.value = time;
                     var delta = (time - prevTime) * k_delta;
 
                     var _zoomSpeed = zoomSpeed;
@@ -172,16 +180,16 @@
                     }
                     zoomAcceleration = 0.0;
 
-                    var _zoom = material.uniforms.zoom.value;
+                    var _zoom = material.uniforms.kzoom.value;
                     var newZoom = _zoom + zoomSpeed * delta;
-                    console.log('%c' + _zoom + ' ' + newZoom, 'color: #ff0000');
+                    //console.log('%c' + _zoom + ' ' + newZoom, 'color: #ff0000');
 
                     if (sign(newZoom) < 0) {
                         newZoom = _zoom;
                     }
-                    material.uniforms.zoom.value = newZoom;
+                    material.uniforms.kzoom.value = newZoom;
 
-                    document.getElementsByClassName('info-label')[0].innerHTML = material.uniforms.zoom.value;
+                    document.getElementsByClassName('info-label')[0].innerHTML = material.uniforms.kzoom.value;
                     prevTime = time;
                 }
                 renderer.render(scene, camera);
