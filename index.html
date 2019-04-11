@@ -314,34 +314,53 @@
                     return this.lng_sub_abs_2_2(a, b, len);
                 },
 
+                /**
+                 * Contract: this.BASE > b >= 0
+                 */
                 lng_mul_2_1: function (a, b, len) {
+
+                    // zero case.
+                    if (b === 0) {
+                        return this.lng_create_2_1(0, len);
+                    }
+
                     var result = new Array(len + 1);
-                    var carry = 0.0;
+                    result[0] = a[0] * this._sign(b);
+                    var carry = 0;
+                    b = Math.abs(b);
 
-                    if (b >= 1.0) {
-                        for (var i = len; i >= 1; i--) {
-                            result[i] = a[i] * b + carry;
-                            carry = Math.floor(result[i] / this.BASE);
-                        }
-                    } else {
-                        for (var i = 0; i < len; i++) {
-
-                            result[i] = a[i] * b + carry;
-
-                            var fractional = result[i] - Math.floor(result[i]);
-                            if (fractional > 0.0) {
-                                carry = Math.floor(fractional * this.BASE);
-                                result[i] = Math.floor(result[i]);
-                            } else {
-                                carry = 0.0;
-                            }
-                        }
+                    for (var i = len; i >= 1; i--) {
+                        var vr = a[i] * b + carry;
+                        carry = Math.floor(vr / this.BASE);
+                        result[i] = vr % this.BASE;
                     }
                     return result;
                 },
 
+                /**
+                 * Contract: a > 0, b > 0.
+                 */
+                lng_mul_abs_2_2: function (a, b, len) {
+                    //
+                },
+
+                lng_mul_2_2: function (a, b, len) {
+
+                    // zero case.
+                    if (this.lng_sign_2(a) === 0 || this.lng_sign_2(b) === 0) {
+                        return this.lng_create_2_1(0, len);
+                    }
+
+                    var result = this.lng_mul_abs_2_2(a, b, len);
+                    result[0] = this.lng_sign_2(a) * this.lng_sign_2(b);
+                    return result;
+                },
+
+                _sign: function(a) {
+                    return a > 0 ? 1 : (a < 0 ? -1 : 0);
+                },
                 _cmp: function (a, b) {
-                    return a > b ? 1 : (a < b ? -1 : 0);
+                    return this._sign(a - b);
                 }
             };
 
@@ -905,6 +924,122 @@
                         result.assert(BigMath.lng_sign_2(c) < 0);
                         result.assert(BigMath.toString(c, 10) == '-' + data.add_str);
                         return result;
+                    },
+
+                    // 1x mul
+                    test_mul_1_001a: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        var a = BigMath.lng_create_2_1(3, 10);
+
+                        var c = BigMath.lng_mul_2_1(a, 4, 10);
+
+                        result.assert(BigMath.lng_sign_2(c) > 0);
+                        result.assert(c[1] === 12);
+                        result.assert(c[2] === 0);
+                        return result;
+                    },
+                    test_mul_1_001b: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        var a = BigMath.lng_create_2_1(3, 10);
+
+                        var c = BigMath.lng_mul_2_1(a, 0, 10);
+
+                        result.assert(BigMath.lng_sign_2(c) === 0);
+                        result.assert(c[1] === 0);
+                        return result;
+                    },
+                    test_mul_1_001c: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        // todo test data
+                        var a = BigMath.lng_create_2_1(999999, 10);
+                        a[1] = 0;
+                        a[2] = 999999;
+
+                        var c = BigMath.lng_mul_2_1(a, -999999, 10);
+
+                        result.assert(BigMath.lng_sign_2(c) < 0);
+                        result.assert(c[1] === 99);
+                        result.assert(c[2] === 9998000001);
+                        result.assert(c[3] === 0);
+                        return result;
+                    },
+                    test_mul_1_002a: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        // todo test data
+                        var a = BigMath.lng_create_2_1(-999999, 10);
+                        a[1] = 0;
+                        a[2] = 999999;
+
+                        var c = BigMath.lng_mul_2_1(a, 999999, 10);
+
+                        result.assert(BigMath.lng_sign_2(c) < 0);
+                        result.assert(c[1] === 99);
+                        result.assert(c[2] === 9998000001);
+                        result.assert(c[3] === 0);
+                        return result;
+                    },
+                    test_mul_1_002b: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        var a = BigMath.lng_create_2_1(-999999, 10);
+
+                        var c = BigMath.lng_mul_2_1(a, 0, 10);
+
+                        result.assert(BigMath.lng_sign_2(c) === 0);
+                        result.assert(c[1] === 0);
+                        result.assert(c[2] === 0);
+                        result.assert(c[3] === 0);
+                        return result;
+                    },
+                    test_mul_1_002c: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        // todo test data
+                        var a = BigMath.lng_create_2_1(-999999, 10);
+                        a[1] = 0;
+                        a[2] = 999999;
+
+                        var c = BigMath.lng_mul_2_1(a, -999999, 10);
+
+                        result.assert(BigMath.lng_sign_2(c) > 0);
+                        result.assert(c[1] === 99);
+                        result.assert(c[2] === 9998000001);
+                        result.assert(c[3] === 0);
+                        return result;
+                    },
+                    test_mul_1_003a: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        var a = BigMath.lng_create_2_1(0, 10);
+
+                        var c = BigMath.lng_mul_2_1(a, 999999, 10);
+
+                        result.assert(BigMath.lng_sign_2(c) === 0);
+                        result.assert(c[1] === 0);
+                        result.assert(c[2] === 0);
+                        result.assert(c[3] === 0);
+                        return result;
+                    },
+                    test_mul_1_003b: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        var a = BigMath.lng_create_2_1(0, 10);
+
+                        var c = BigMath.lng_mul_2_1(a, 0, 10);
+
+                        result.assert(BigMath.lng_sign_2(c) === 0);
+                        result.assert(c[1] === 0);
+                        result.assert(c[2] === 0);
+                        result.assert(c[3] === 0);
+                        return result;
+                    },
+                    test_mul_1_003c: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        var a = BigMath.lng_create_2_1(0, 10);
+
+                        var c = BigMath.lng_mul_2_1(a, -3, 10);
+
+                        result.assert(BigMath.lng_sign_2(c) === 0);
+                        result.assert(c[1] === 0);
+                        result.assert(c[2] === 0);
+                        result.assert(c[3] === 0);
+                        return result;
                     }
                 },
                 dataProviders: {
@@ -937,6 +1072,7 @@
 
                         var add_str = '2.532088435736818224609583134922026391303224939201134591879258156084459580604154703434499338';
                         var sub_str = '0.072865419602290350896046865635019500619444656691963586524276437567848452869327456392543036';
+                        var mul_str = '1.601540619254577299271767040233071337758050327808686017310994212642922842880572428833247189';
                         return {a: a, b: b, add_str: add_str, sub_str: sub_str}
                     }
                 },
