@@ -21,23 +21,31 @@
             }
         </style>
 
-        <div class="info-label"><!-- --></div>
+        <div class="info-label">
+            <div class="zoom-label"><!-- --></div>
+            <div class="pos-x-label"><!-- --></div>
+            <div class="pos-y-label"><!-- --></div>
+            <div class="speed-label"><!-- --></div>
+            <div class="acc-label"><!-- --></div>
+        </div>
 
         <script id="mandelbrot-vertex" type="x-shader/x-vertex">
             varying vec2 pos;
 
             void main () {
-                pos = position.xy * 2.0;
+                pos = position.xy;
                 gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
             }
         </script>
 
         <script id="mandelbrot-fragment" type="x-shader/x-fragment">
             uniform float time;
-            uniform float kzoom;
-            uniform vec2 ktranslate;
+            uniform int len;
+            uniform float kzoom[10];
+            uniform vec2 ktranslate[10];
             varying vec2 pos;
             const int MAXITER = 1000;
+            const float BASE = 1e+10;
 
             // All components are in the range [0..1], including hue.
             vec3 hsv2rgb(in vec3 c) {
@@ -79,6 +87,9 @@
                 }
 
                 gl_FragColor = vec4(color);
+                // if (abs(pos.x * kzoom) < 10e-9) {
+                //     gl_FragColor = vec4(0, 1, 1, 1);
+                // }
             }
         </script>
 
@@ -97,31 +108,728 @@
 
             // create mandelbrot mesh
             var geometry = new THREE.PlaneGeometry(2, 2, 0);
-            var material = new THREE.ShaderMaterial({
-                uniforms: {
-                    time: {type: 'f', value: 0.0},
-                    kzoom: {type: 'f', value: 2.0},
-                    ktranslate: {type: 'vec2', value: new THREE.Vector2(0.0, 0.0)}
-                },
-                vertexShader: document.getElementById('mandelbrot-vertex').innerHTML,
-                fragmentShader: document.getElementById('mandelbrot-fragment').innerHTML
-            });
-            var mesh = new THREE.Mesh(geometry, material);
+            // var material = new THREE.ShaderMaterial({
+            //     uniforms: {
+            //         time: {type: 'f', value: 0.0},
+            //         len: {value: 2},
+            //         kzoom: {value: [2.0, 0.0]},
+            //         ktranslate: {value: [new THREE.Vector2(0.0, 0.0), new THREE.Vector2(0.0, 0.0)]}
+            //     },
+            //     vertexShader: document.getElementById('mandelbrot-vertex').innerHTML,
+            //     fragmentShader: document.getElementById('mandelbrot-fragment').innerHTML
+            // });
+            // var mesh = new THREE.Mesh(geometry, material);
 
-            scene.add(mesh);
+            // scene.add(mesh);
 
             var zoomSpeed = 0.0,
                 zoomAcceleration = 0.0,
                 zoomAccelerationInc = 2.0 * 0.35,
                 k_frict = 0.4,
                 k_delta = 0.01;
-            var pan_speed = 4.0;
+            var pan_speed = 2.0;
 
             function sign(v) {
                 return v > 0 ? 1 : (v < 0 ? -1 : 0);
             }
 
+            /**
+             * Contracts:
+             * * Unsupported values: x >= this.BASE (1e+10), everything above is truncated / overflowed.
+             * * number[0] - sign flag (1, 0 or -1). Zero always has 0 sign flag;
+             * * number[1] - integer part, < this.BASE;
+             * * number[2..len] - fractional part.
+             *
+             * Procedural style for copying it to GLSL code subsequently.
+             */
+            var BigMath = {
 
+                BASE: 1e+10,
+
+                /**
+                 * Debug and test purposes.
+                 */
+                toString: function(a, len) {
+                    var part_int = '' + (a[0] < 0 ? '-' : '') + a[1],
+                        part_frac = '';
+
+                    var i = len;
+                    while (a[i] == 0) {i--}
+
+                    for (; i > 1; i--) {
+                        part_frac = (this.BASE + a[i] + '').slice(-(this.BASE - 1 + '').length) + part_frac;
+                    }
+                    return part_int + (part_frac.length ? ('.' + part_frac) : '');
+                },
+
+                /**
+                 * Support only integer numbers < this.BASE;
+                 */
+                lng_create_2_1: function(b, len) {
+                    var result = new Array(len + 1);
+
+                    result[0] = b < 0 ? -1 : (b > 0 ? 1 : 0);
+                    result[1] = Math.abs(b);
+                    for (var i = 2; i <= len; i++) {
+                        result[i] = 0;
+                    }
+                    return result;
+                },
+
+                lng_sign_2: function (b) {
+                    return b[0];
+                },
+
+                lng_inv_2: function (a) {
+                    var result = Array.from(a);
+                    result[0] = -result[0];
+                    return result;
+                },
+
+                lng_abs_2: function (a) {
+                    var result = Array.from(a);
+                    result[0] = this.lng_sign_2(a) === 0 ? 0 : 1;
+                    return result;
+                },
+
+                // @private (not for testing)
+                lng_cmp_abs_2_2: function (a, b, len) {
+                    for (var i = 1; i <= len; i++) {
+                        if (a[i] == b[i]) {
+                            continue;
+                        }
+                        return a[i] > b[i] ? 1 : -1;
+                    }
+                    return 0;
+                },
+
+                lng_cmp_2_2: function (a, b, len) {
+                    if (this.lng_sign_2(a) > 0 && this.lng_sign_2(b) > 0) {
+                        return this.lng_cmp_abs_2_2(a, b, len);
+                    }
+                    if (this.lng_sign_2(a) < 0 && this.lng_sign_2(b) < 0) {
+                        return -this.lng_cmp_abs_2_2(a, b, len);
+                    }
+                    return this._cmp(this.lng_sign_2(a), this.lng_sign_2(b));
+                },
+
+                lng_add_2_2: function (a, b, len) {
+
+                    // case of adding zero
+                    if (this.lng_sign_2(a) === 0 || this.lng_sign_2(b) === 0) {
+                        var non_zero = this.lng_sign_2(a) === 0 ? b : a; // or zero, if both zero.
+                        return Array.from(non_zero);
+                    }
+
+                    // case of different signs.
+                    if ( (this.lng_sign_2(a) < 0 && this.lng_sign_2(b) > 0) || (this.lng_sign_2(a) > 0 && this.lng_sign_2(b) < 0) ) {
+
+                        if (this.lng_sign_2(a) > 0) {
+                            var t = a;
+                            a = b;
+                            b = t;
+                        }
+
+                        if (this.lng_cmp_abs_2_2(a, b, len) > 0) {
+                            return this.lng_inv_2(this.lng_sub_2_2(this.lng_abs_2(a), b, len));
+                        } else {
+                            return this.lng_sub_2_2(b, this.lng_abs_2(a), len);
+                        }
+                    }
+
+                    var result = new Array(len + 1);
+                    var carry = 0.0;
+
+                    for (var i = len; i > 0; i--) {
+                        var vr = a[i] + b[i] + carry;
+                        result[i] = vr % this.BASE;
+                        carry = Math.floor(vr / this.BASE);
+                    }
+
+                    result[0] = this.lng_sign_2(a);
+                    return result;
+                },
+
+                lng_sub_2_2: function (a, b, len) {
+
+                    if (this.lng_cmp_2_2(a, b, len) < 0) {
+                        var result = this.lng_sub_2_2(b, a, len);
+                        return this.lng_inv_2(result);
+                    }
+
+                    var result = new Array(len + 1);
+                    var uncarry = 0;
+
+                    for (var i = len - 1; i >= 0; i--) {
+                        var ai = a[i] - uncarry >= 0 ? a[i] - uncarry : (i > 0 ? this.BASE - uncarry : a[i] - uncarry);
+                        var vr = ai - b[i];
+                        if (vr < 0 || a[i] - uncarry < 0) {
+                            uncarry = 1;
+                            if (vr < 0 && i > 0) {
+                                vr = vr + this.BASE;
+                            }
+                        } else {
+                            uncarry = 0;
+                        }
+                        result[i] = vr % this.BASE;
+                    }
+                    return result;
+                },
+
+                lng_mul_2_1: function (a, b, len) {
+                    var result = new Array(len + 1);
+                    var carry = 0.0;
+
+                    if (b >= 1.0) {
+                        for (var i = len - 1; i >= 0; i--) {
+                            result[i] = a[i] * b + carry;
+                            carry = Math.floor(result[i] / this.BASE);
+                        }
+                    } else {
+                        for (var i = 0; i < len; i++) {
+
+                            result[i] = a[i] * b + carry;
+
+                            var fractional = result[i] - Math.floor(result[i]);
+                            if (fractional > 0.0) {
+                                carry = Math.floor(fractional * this.BASE);
+                                result[i] = Math.floor(result[i]);
+                            } else {
+                                carry = 0.0;
+                            }
+                        }
+                    }
+                    return result;
+                },
+
+                _cmp: function (a, b) {
+                    return a > b ? 1 : (a < b ? -1 : 0);
+                }
+            };
+
+            var TestResult = function (test_name) {
+                this.test_name = test_name;
+                this.result = true;
+                this.message = '';
+            };
+            TestResult.prototype = {
+                assert: function (statement, message) {
+                    if (!statement) {
+                        this.result = false;
+                        if (this.message && this.message.length) {
+                            this.message += ', ';
+                        }
+                        this.message += ((message && message.length) ? message : '');
+                    }
+                },
+                release: function () {
+                    if (this.result) {
+                        console.log('%c' + this.test_name + ': passed', 'color: green');
+                    } else {
+                        console.log('%c' + this.test_name + (this.message ? ': ' + this.message : ''), 'color: red');
+                    }
+                }
+            };
+
+            var BigMathTests = function () {};
+            BigMathTests.prototype = {
+
+                tests: {
+                    test_create_0: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        var lng_x = BigMath.lng_create_2_1(2, 10);
+
+                        result.assert(lng_x.length == 11, 'lng_x.length == 11');
+                        result.assert(lng_x[0] > 0, 'lng_x[0] > 0');
+                        result.assert(lng_x[1] == 2, 'lng_x[0] == 2');
+                        for (var i = 2; i <= 10; i++) {
+                            result.assert(lng_x[i] == 0, 'lng_x[i] == 0');
+                        }
+
+                        return result;
+                    },
+                    test_create_zero: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        var lng_x = BigMath.lng_create_2_1(0, 10);
+                        result.assert(lng_x[0] == 0);
+                        return result;
+                    },
+                    test_create_neg: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        var lng_x = BigMath.lng_create_2_1(-1, 10);
+                        result.assert(lng_x[0] < 0, 'lng_x[0] < 0');
+                        result.assert(lng_x[1] > 0, 'lng_x[1] > 0');
+                        return result;
+                    },
+                    test_toString_zero: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        var lng_x = BigMath.lng_create_2_1(0, 10);
+                        var str = BigMath.toString(lng_x, 10);
+                        result.assert(str === '0');
+                        return result;
+                    },
+                    test_toString_one: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        var lng_x = BigMath.lng_create_2_1(1, 10);
+                        var str = BigMath.toString(lng_x, 10);
+                        result.assert(str === '1');
+                        return result;
+                    },
+                    test_toString_minus_one: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        var lng_x = BigMath.lng_create_2_1(-1, 10);
+                        var str = BigMath.toString(lng_x, 10);
+                        result.assert(str === '-1');
+                        return result;
+                    },
+                    test_toString_pos_fract: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        var lng_x = BigMath.lng_create_2_1(1, 10);
+                        lng_x[2] = 0.1 * BigMath.BASE; // todo make not synth, after enabling fractional create().
+                        var str = BigMath.toString(lng_x, 10);
+                        result.assert(str === '1.1000000000');
+                        return result;
+                    },
+                    test_sign_pos: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        var lng_x = BigMath.lng_create_2_1(1, 10);
+                        result.assert(BigMath.lng_sign_2(lng_x) > 0);
+                        return result;
+                    },
+                    test_sign_zero: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        var lng_x = BigMath.lng_create_2_1(0, 10);
+                        result.assert(BigMath.lng_sign_2(lng_x) === 0);
+                        return result;
+                    },
+                    test_sign_neg: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        var lng_x = BigMath.lng_create_2_1(-1, 10);
+                        result.assert(BigMath.lng_sign_2(lng_x) < 0);
+                        return result;
+                    },
+                    test_inv_pos: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        var lng_x = BigMath.lng_create_2_1(1, 10);
+                        result.assert(BigMath.lng_sign_2(BigMath.lng_inv_2(lng_x)) < 0);
+                        result.assert(BigMath.lng_sign_2(lng_x) > 0, 'Source number is modified');
+                        return result;
+                    },
+                    test_inv_neg: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        var lng_x = BigMath.lng_create_2_1(-11, 10);
+                        result.assert(BigMath.lng_sign_2(BigMath.lng_inv_2(lng_x)) > 0);
+                        result.assert(BigMath.lng_sign_2(lng_x) < 0, 'Source number is modified');
+                        return result;
+                    },
+                    test_inv_zero: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        var lng_x = BigMath.lng_create_2_1(0, 10);
+                        result.assert(BigMath.lng_sign_2(BigMath.lng_inv_2(lng_x)) === 0);
+                        result.assert(BigMath.lng_sign_2(lng_x) === 0, 'Source number is modified');
+                        return result;
+                    },
+                    test_abs_pos: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        var lng_x = BigMath.lng_create_2_1(132, 10);
+                        var lng_abs = BigMath.lng_abs_2(lng_x);
+
+                        result.assert(lng_x[0] > 0);
+                        result.assert(lng_x[1] === 132);
+                        result.assert(lng_abs[0] > 0);
+                        result.assert(lng_abs[1] === 132);
+                        return result;
+                    },
+                    test_abs_neg: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        var lng_x = BigMath.lng_create_2_1(-142, 10);
+                        var lng_abs = BigMath.lng_abs_2(lng_x);
+
+                        result.assert(lng_x[0] < 0);
+                        result.assert(lng_x[1] === 142);
+                        result.assert(lng_abs[0] > 0);
+                        result.assert(lng_abs[1] === 142);
+                        return result;
+                    },
+                    test_abs_zero: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        var lng_x = BigMath.lng_create_2_1(0, 10);
+                        var lng_abs = BigMath.lng_abs_2(lng_x);
+
+                        result.assert(lng_x[0] === 0);
+                        result.assert(lng_x[1] === 0);
+                        result.assert(lng_abs[0] === 0);
+                        result.assert(lng_abs[1] === 0);
+                        return result;
+                    },
+
+                    test_cmp_001: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        var lng_x = BigMath.lng_create_2_1(0, 10);
+                        var lng_y = BigMath.lng_create_2_1(0, 10);
+
+                        result.assert(BigMath.lng_cmp_2_2(lng_x, lng_y, 10) === 0);
+                        return result;
+                    },
+                    test_cmp_002: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        var lng_x = BigMath.lng_create_2_1(100, 10);
+                        var lng_y = BigMath.lng_create_2_1(0, 10);
+
+                        result.assert(BigMath.lng_cmp_2_2(lng_x, lng_y, 10) > 0);
+                        return result;
+                    },
+                    test_cmp_002a: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        var lng_x = BigMath.lng_create_2_1(100, 10);
+                        var lng_y = BigMath.lng_create_2_1(0, 10);
+
+                        result.assert(BigMath.lng_cmp_2_2(lng_y, lng_x, 10) < 0);
+                        return result;
+                    },
+                    test_cmp_003: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        var lng_x = BigMath.lng_create_2_1(0, 10);
+                        var lng_y = BigMath.lng_create_2_1(100, 10);
+
+                        result.assert(BigMath.lng_cmp_2_2(lng_x, lng_y, 10) < 0);
+                        return result;
+                    },
+                    test_cmp_003a: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        var lng_x = BigMath.lng_create_2_1(0, 10);
+                        var lng_y = BigMath.lng_create_2_1(100, 10);
+
+                        result.assert(BigMath.lng_cmp_2_2(lng_y, lng_x, 10) > 0);
+                        return result;
+                    },
+                    test_cmp_003b: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        var lng_x = BigMath.lng_create_2_1(100, 10);
+                        var lng_y = BigMath.lng_create_2_1(100, 10);
+
+                        result.assert(BigMath.lng_cmp_2_2(lng_y, lng_x, 10) === 0);
+                        return result;
+                    },
+
+                    test_cmp_004: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        var lng_x = BigMath.lng_create_2_1(-50, 10);
+                        var lng_y = BigMath.lng_create_2_1(100, 10);
+
+                        result.assert(BigMath.lng_cmp_2_2(lng_x, lng_y, 10) < 0);
+                        return result;
+                    },
+                    test_cmp_004a: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        var lng_x = BigMath.lng_create_2_1(-100, 10);
+                        var lng_y = BigMath.lng_create_2_1(100, 10);
+
+                        result.assert(BigMath.lng_cmp_2_2(lng_x, lng_y, 10) < 0);
+                        return result;
+                    },
+                    test_cmp_004b: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        var lng_x = BigMath.lng_create_2_1(-150, 10);
+                        var lng_y = BigMath.lng_create_2_1(100, 10);
+
+                        result.assert(BigMath.lng_cmp_2_2(lng_x, lng_y, 10) < 0);
+                        return result;
+                    },
+
+                    test_cmp_005: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        var lng_x = BigMath.lng_create_2_1(50, 10);
+                        var lng_y = BigMath.lng_create_2_1(-100, 10);
+
+                        result.assert(BigMath.lng_cmp_2_2(lng_x, lng_y, 10) > 0);
+                        return result;
+                    },
+                    test_cmp_005a: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        var lng_x = BigMath.lng_create_2_1(100, 10);
+                        var lng_y = BigMath.lng_create_2_1(-100, 10);
+
+                        result.assert(BigMath.lng_cmp_2_2(lng_x, lng_y, 10) > 0);
+                        return result;
+                    },
+                    test_cmp_005b: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        var lng_x = BigMath.lng_create_2_1(150, 10);
+                        var lng_y = BigMath.lng_create_2_1(-100, 10);
+
+                        result.assert(BigMath.lng_cmp_2_2(lng_x, lng_y, 10) > 0);
+                        return result;
+                    },
+
+                    test_cmp_006: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        var lng_x = BigMath.lng_create_2_1(-50, 10);
+                        var lng_y = BigMath.lng_create_2_1(-100, 10);
+
+                        result.assert(BigMath.lng_cmp_2_2(lng_x, lng_y, 10) > 0);
+                        return result;
+                    },
+                    test_cmp_006a: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        var lng_x = BigMath.lng_create_2_1(-100, 10);
+                        var lng_y = BigMath.lng_create_2_1(-100, 10);
+
+                        result.assert(BigMath.lng_cmp_2_2(lng_x, lng_y, 10) === 0);
+                        return result;
+                    },
+                    test_cmp_006b: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        var lng_x = BigMath.lng_create_2_1(-150, 10);
+                        var lng_y = BigMath.lng_create_2_1(-100, 10);
+
+                        result.assert(BigMath.lng_cmp_2_2(lng_x, lng_y, 10) < 0);
+                        return result;
+                    },
+
+                    test_cmp_007: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        var lng_x = BigMath.lng_create_2_1(10, 10);
+                        var lng_y = BigMath.lng_create_2_1(9, 10);
+                        lng_y[2] = 0.5 * BigMath.BASE; // todo
+
+                        result.assert(BigMath.lng_cmp_2_2(lng_x, lng_y, 10) > 0);
+                        return result;
+                    },
+                    test_cmp_007a: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        var lng_x = BigMath.lng_create_2_1(10, 10);
+                        var lng_y = BigMath.lng_create_2_1(10, 10);
+                        lng_y[2] = 0.5 * BigMath.BASE; // todo
+
+                        result.assert(BigMath.lng_cmp_2_2(lng_x, lng_y, 10) < 0);
+                        return result;
+                    },
+                    test_cmp_007b: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        var lng_x = BigMath.lng_create_2_1(10, 10);
+                        var lng_y = BigMath.lng_create_2_1(10, 10);
+                        lng_y[2] = 0.5 * BigMath.BASE; // todo
+                        lng_x[2] = 0.5 * BigMath.BASE; // todo
+
+                        result.assert(BigMath.lng_cmp_2_2(lng_x, lng_y, 10) === 0);
+                        return result;
+                    },
+                    test_cmp_007c: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        var lng_x = BigMath.lng_create_2_1(10, 10);
+                        var lng_y = BigMath.lng_create_2_1(11, 10);
+                        lng_y[2] = 0.5 * BigMath.BASE; // todo
+                        lng_x[2] = 0.5 * BigMath.BASE; // todo
+
+                        result.assert(BigMath.lng_cmp_2_2(lng_x, lng_y, 10) < 0);
+                        return result;
+                    },
+                    test_cmp_007d: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        var lng_x = BigMath.lng_create_2_1(10, 10);
+                        var lng_y = BigMath.lng_create_2_1(10, 10);
+                        lng_y[2] = 0.5 * BigMath.BASE; // todo
+                        lng_x[2] = 0.55 * BigMath.BASE; // todo
+
+                        result.assert(BigMath.lng_cmp_2_2(lng_x, lng_y, 10) > 0);
+                        return result;
+                    },
+                    test_cmp_007e: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        var lng_x = BigMath.lng_create_2_1(10, 10);
+                        var lng_y = BigMath.lng_create_2_1(10, 10);
+                        // todo
+                        for (var i = 2; i <= 10; i++) {
+                            lng_x[i] = 0.9999999999 * BigMath.BASE;
+                            lng_y[i] = 0.9999999999 * BigMath.BASE;
+                        }
+
+                        result.assert(BigMath.lng_cmp_2_2(lng_x, lng_y, 10) === 0);
+                        return result;
+                    },
+                    test_cmp_007f: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        var lng_x = BigMath.lng_create_2_1(10, 10);
+                        var lng_y = BigMath.lng_create_2_1(10, 10);
+                        // todo
+                        for (var i = 2; i <= 10; i++) {
+                            lng_x[i] = 0.9999999999 * BigMath.BASE;
+                            lng_y[i] = 0.9999999999 * BigMath.BASE;
+                        }
+                        lng_x[10] = 0.9999999998 * BigMath.BASE;
+
+                        result.assert(BigMath.lng_cmp_2_2(lng_x, lng_y, 10) < 0);
+                        return result;
+                    },
+
+                    test_add_001: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        var a = BigMath.lng_create_2_1(1, 10);
+                        var b = BigMath.lng_create_2_1(1, 10);
+                        var c = BigMath.lng_add_2_2(a, b, 10);
+
+                        result.assert(BigMath.lng_sign_2(c) > 0);
+                        result.assert(c[1] === 2);
+                        result.assert(c[2] === 0);
+                        return result;
+                    },
+                    test_add_001a: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        var a = BigMath.lng_create_2_1(1, 10);
+                        var b = BigMath.lng_create_2_1(0, 10);
+                        var c = BigMath.lng_add_2_2(a, b, 10);
+
+                        result.assert(BigMath.lng_sign_2(c) > 0);
+                        result.assert(c[1] === 1);
+                        result.assert(c[2] === 0);
+                        return result;
+                    },
+                    test_add_001b: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        var a = BigMath.lng_create_2_1(0, 10);
+                        var b = BigMath.lng_create_2_1(1, 10);
+                        var c = BigMath.lng_add_2_2(a, b, 10);
+
+                        result.assert(BigMath.lng_sign_2(c) > 0);
+                        result.assert(c[1] === 1);
+                        result.assert(c[2] === 0);
+                        return result;
+                    },
+                    test_add_001c: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        var a = BigMath.lng_create_2_1(0, 10);
+                        var b = BigMath.lng_create_2_1(0, 10);
+                        var c = BigMath.lng_add_2_2(a, b, 10);
+
+                        result.assert(BigMath.lng_sign_2(c) === 0);
+                        result.assert(c[1] === 0);
+                        result.assert(c[2] === 0);
+                        return result;
+                    },
+                    test_add_002a: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        var a = BigMath.lng_create_2_1(-2, 10);
+                        var b = BigMath.lng_create_2_1(-3, 10);
+                        var c = BigMath.lng_add_2_2(a, b, 10);
+
+                        result.assert(BigMath.lng_sign_2(c) < 0);
+                        result.assert(c[1] === 5);
+                        result.assert(c[2] === 0);
+                        return result;
+                    },
+                    test_add_002b: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        var a = BigMath.lng_create_2_1(-2, 10);
+                        var b = BigMath.lng_create_2_1(0, 10);
+                        var c = BigMath.lng_add_2_2(a, b, 10);
+
+                        result.assert(BigMath.lng_sign_2(c) < 0);
+                        result.assert(c[1] === 2);
+                        result.assert(c[2] === 0);
+                        return result;
+                    },
+                    test_add_002c: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        var a = BigMath.lng_create_2_1(0, 10);
+                        var b = BigMath.lng_create_2_1(-3, 10);
+                        var c = BigMath.lng_add_2_2(a, b, 10);
+
+                        result.assert(BigMath.lng_sign_2(c) < 0);
+                        result.assert(c[1] === 3);
+                        result.assert(c[2] === 0);
+                        return result;
+                    },
+                    test_add_003a: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        var a = BigMath.lng_create_2_1(1, 10);
+                        var b = BigMath.lng_create_2_1(1, 10);
+                        a[2] = 0.9999999999 * BigMath.BASE;
+                        b[2] = 0.9999999999 * BigMath.BASE;
+                        var c = BigMath.lng_add_2_2(a, b, 10);
+
+                        result.assert(BigMath.lng_sign_2(c) > 0);
+                        result.assert(c[1] === 3);
+                        result.assert(c[2] === 9999999998);
+                        return result;
+                    },
+                    test_add_003b: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        var a = BigMath.lng_create_2_1(1, 10);
+                        var b = BigMath.lng_create_2_1(1, 10);
+                        a[2] = 0.9999999999 * BigMath.BASE;
+                        b[2] = 0.0000000001 * BigMath.BASE;
+                        var c = BigMath.lng_add_2_2(a, b, 10);
+
+                        result.assert(BigMath.lng_sign_2(c) > 0);
+                        result.assert(c[1] === 3);
+                        result.assert(c[2] === 0);
+                        result.assert(c[3] === 0);
+                        return result;
+                    },
+                    test_add_003c: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        var a = BigMath.lng_create_2_1(1, 10);
+                        var b = BigMath.lng_create_2_1(1, 10);
+                        a[2] = 2296115080;
+                        a[3] = 6726393685;
+                        a[4] = 6768134643;
+                        a[5] = 5034453418;
+                        a[6] = 9014125458;
+                        a[7] = 5502677490;
+                        a[8] = 8592583055;
+                        a[9] = 6386741362;
+                        a[10] = 3520978151;
+
+                        b[2] = 3024769276;
+                        b[3] = 6955428775;
+                        b[4] = 2815000278;
+                        b[5] = 5229459613;
+                        b[6] = 3479794654;
+                        b[7] = 9089201767;
+                        b[8] = 2968261540;
+                        b[9] = 1673674107;
+                        b[10] = 9913521187;
+                        // console.log(BigMath.toString(a, 10));
+                        // console.log(BigMath.toString(b, 10));
+                        // 1.229611508067263936856768134643503445341890141254585502677490859258305563867413623520978151
+                        // 1.302476927669554287752815000278522945961334797946549089201767296826154016736741079913521187
+                        var c = BigMath.lng_add_2_2(a, b, 10);
+                        // console.log(BigMath.toString(c, 10));
+
+                        result.assert(BigMath.lng_sign_2(c) > 0);
+                        result.assert(BigMath.toString(c, 10) == '2.532088435736818224609583134922026391303224939201134591879258156084459580604154703434499338');
+                        return result;
+                    },
+                    test_add_004a: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        var a = BigMath.lng_create_2_1(-1, 10);
+                        var b = BigMath.lng_create_2_1(1, 10);
+                        var c = BigMath.lng_add_2_2(a, b, 10);
+
+                        result.assert(BigMath.lng_sign_2(c) === 0);
+                        result.assert();
+                    }
+                },
+                execute: function() {
+                    var results = [];
+                    for (var test in this.tests) {
+                        results.push(this.tests[test].call(this));
+                    }
+
+                    // Show successful
+                    var successful = results.filter(function (r) {return r.result}).length;
+                    console.log('%c' + 'Passed: ' + successful, 'color: ' + (successful > 0 ? 'green' : 'red'));
+
+                    // Show unsuccessful
+                    results.filter(function (r) {return !r.result})
+                        .forEach(function (r) {
+                            r.release();
+                        });
+                }
+            };
+
+            new BigMathTests().execute();
 
             var isMouseDown = false,
                 dragPosition = null,
@@ -165,33 +873,37 @@
             function render (time) {
                 requestAnimationFrame(render);
 
-                if (time) {
-                    material.uniforms.time.value = time;
-                    var delta = (time - prevTime) * k_delta;
-
-                    var _zoomSpeed = zoomSpeed;
-                    zoomSpeed += delta * (
-                        // total acceleration
-                        zoomAcceleration +
-                        (-k_frict * zoomSpeed)
-                    );
-                    if (sign(_zoomSpeed * zoomSpeed) < 0/* || Math.abs(zoomSpeed) < 10e-4*/) {
-                        zoomSpeed = 0.0;
-                    }
-                    zoomAcceleration = 0.0;
-
-                    var _zoom = material.uniforms.kzoom.value;
-                    var newZoom = _zoom + zoomSpeed * delta;
-                    //console.log('%c' + _zoom + ' ' + newZoom, 'color: #ff0000');
-
-                    if (sign(newZoom) < 0) {
-                        newZoom = _zoom;
-                    }
-                    material.uniforms.kzoom.value = newZoom;
-
-                    document.getElementsByClassName('info-label')[0].innerHTML = material.uniforms.kzoom.value;
-                    prevTime = time;
-                }
+                // if (time) {
+                //     material.uniforms.time.value = time;
+                //     var delta = (time - prevTime) * k_delta;
+                //
+                //     var _zoomSpeed = zoomSpeed;
+                //     zoomSpeed += delta * (
+                //         // total acceleration
+                //         zoomAcceleration +
+                //         (-k_frict * zoomSpeed)
+                //     );
+                //     if (sign(_zoomSpeed * zoomSpeed) < 0/* || Math.abs(zoomSpeed) < 10e-4*/) {
+                //         zoomSpeed = 0.0;
+                //     }
+                //     zoomAcceleration = 0.0;
+                //
+                //     var _zoom = material.uniforms.kzoom.value;
+                //     var newZoom = _zoom + zoomSpeed * delta;
+                //     //console.log('%c' + _zoom + ' ' + newZoom, 'color: #ff0000');
+                //
+                //     if (sign(newZoom) < 0) {
+                //         newZoom = _zoom;
+                //     }
+                //     material.uniforms.kzoom.value = newZoom;
+                //
+                //     document.getElementsByClassName('zoom-label')[0].innerHTML = material.uniforms.kzoom.value;
+                //     document.getElementsByClassName('pos-x-label')[0].innerHTML = material.uniforms.ktranslate.value.x;
+                //     document.getElementsByClassName('pos-y-label')[0].innerHTML = material.uniforms.ktranslate.value.y;
+                //     document.getElementsByClassName('speed-label')[0].innerHTML = zoomSpeed;
+                //     document.getElementsByClassName('acc-label')[0].innerHTML = zoomAcceleration + (-k_frict * zoomSpeed);
+                //     prevTime = time;
+                // }
                 renderer.render(scene, camera);
             }
 
