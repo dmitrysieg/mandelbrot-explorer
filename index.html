@@ -213,31 +213,12 @@
                     return this._cmp(this.lng_sign_2(a), this.lng_sign_2(b));
                 },
 
-                lng_add_2_2: function (a, b, len) {
-
-                    // case of adding zero
-                    if (this.lng_sign_2(a) === 0 || this.lng_sign_2(b) === 0) {
-                        var non_zero = this.lng_sign_2(a) === 0 ? b : a; // or zero, if both zero.
-                        return Array.from(non_zero);
-                    }
-
-                    // case of different signs.
-                    if ( (this.lng_sign_2(a) < 0 && this.lng_sign_2(b) > 0) || (this.lng_sign_2(a) > 0 && this.lng_sign_2(b) < 0) ) {
-
-                        if (this.lng_sign_2(a) > 0) {
-                            var t = a;
-                            a = b;
-                            b = t;
-                        }
-
-                        if (this.lng_cmp_abs_2_2(a, b, len) > 0) {
-                            return this.lng_inv_2(this.lng_sub_2_2(this.lng_abs_2(a), b, len));
-                        } else {
-                            return this.lng_sub_2_2(b, this.lng_abs_2(a), len);
-                        }
-                    }
-
+                /**
+                 * Contract: a >= b >= 0.
+                 */
+                lng_add_abs_2_2: function (a, b, len) {
                     var result = new Array(len + 1);
+                    result[0] = 1;
                     var carry = 0.0;
 
                     for (var i = len; i > 0; i--) {
@@ -245,22 +226,20 @@
                         result[i] = vr % this.BASE;
                         carry = Math.floor(vr / this.BASE);
                     }
-
-                    result[0] = this.lng_sign_2(a);
                     return result;
                 },
 
-                lng_sub_2_2: function (a, b, len) {
-
-                    if (this.lng_cmp_2_2(a, b, len) < 0) {
-                        var result = this.lng_sub_2_2(b, a, len);
-                        return this.lng_inv_2(result);
-                    }
-
+                /**
+                 * Contract: a >= b >= 0.
+                 * Caution: result sign is not being set!
+                 */
+                lng_sub_abs_2_2: function (a, b, len) {
                     var result = new Array(len + 1);
+                    result[0] = 1;
                     var uncarry = 0;
+                    var all_zero = true;
 
-                    for (var i = len - 1; i >= 0; i--) {
+                    for (var i = len; i >= 1; i--) {
                         var ai = a[i] - uncarry >= 0 ? a[i] - uncarry : (i > 0 ? this.BASE - uncarry : a[i] - uncarry);
                         var vr = ai - b[i];
                         if (vr < 0 || a[i] - uncarry < 0) {
@@ -272,8 +251,67 @@
                             uncarry = 0;
                         }
                         result[i] = vr % this.BASE;
+                        all_zero = all_zero && (result[i] === 0);
+                    }
+                    if (all_zero) {
+                        result[0] = 0;
                     }
                     return result;
+                },
+
+                lng_add_2_2: function (a, b, len) {
+
+                    // case of adding zero
+                    if (this.lng_sign_2(a) === 0 || this.lng_sign_2(b) === 0) {
+                        var non_zero = this.lng_sign_2(a) === 0 ? b : a; // or zero, if both zero.
+                        return Array.from(non_zero);
+                    }
+
+                    // case of different signs.
+                    if (this.lng_sign_2(a) * this.lng_sign_2(b) < 0) {
+
+                        if (this.lng_sign_2(a) > 0) {
+                            var t = a;
+                            a = b;
+                            b = t;
+                        }
+
+                        if (this.lng_cmp_abs_2_2(a, b, len) > 0) {
+                            return this.lng_inv_2(this.lng_sub_abs_2_2(a, b, len));
+                        } else {
+                            return this.lng_sub_abs_2_2(b, a, len);
+                        }
+                    }
+
+                    var result = this.lng_add_abs_2_2(a, b, len);
+
+                    result[0] = this.lng_sign_2(a);
+                    return result;
+                },
+
+                lng_sub_2_2: function (a, b, len) {
+
+                    // cases of subtracting zero or subtracting from zero.
+                    if (this.lng_sign_2(b) === 0) {
+                        return Array.from(a);
+                    }
+                    if (this.lng_sign_2(a) === 0) {
+                        return this.lng_inv_2(b);
+                    }
+
+                    // cases of opposite signs.
+                    if (this.lng_sign_2(a) * this.lng_sign_2(b) < 0) {
+                        var result = this.lng_add_abs_2_2(a, b, len);
+                        result[0] = a[0];
+                        return result;
+                    }
+
+                    if (this.lng_cmp_2_2(b, a, len) > 0) {
+                        var result = this.lng_sub_abs_2_2(b, a, len);
+                        return this.lng_inv_2(result);
+                    }
+
+                    return this.lng_sub_abs_2_2(a, b, len);
                 },
 
                 lng_mul_2_1: function (a, b, len) {
@@ -281,7 +319,7 @@
                     var carry = 0.0;
 
                     if (b >= 1.0) {
-                        for (var i = len - 1; i >= 0; i--) {
+                        for (var i = len; i >= 1; i--) {
                             result[i] = a[i] * b + carry;
                             carry = Math.floor(result[i] / this.BASE);
                         }
@@ -326,7 +364,7 @@
                     if (this.result) {
                         console.log('%c' + this.test_name + ': passed', 'color: green');
                     } else {
-                        console.log('%c' + this.test_name + (this.message ? ': ' + this.message : ''), 'color: red');
+                        console.log('%c' + '* ' + this.test_name + (this.message ? ': ' + this.message : ''), 'color: red');
                     }
                 }
             };
@@ -769,6 +807,108 @@
                     },
                     test_add_003c: function () {
                         var result = new TestResult(arguments.callee.name);
+                        var data = this.dataProviders.getHardDies();
+
+                        var c = BigMath.lng_add_2_2(data.a, data.b, 10);
+                        // console.log(BigMath.toString(c, 10));
+
+                        result.assert(BigMath.lng_sign_2(c) > 0);
+                        result.assert(BigMath.toString(c, 10) == data.add_str);
+                        return result;
+                    },
+
+                    // diff signs
+                    test_add_004a: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        var a = BigMath.lng_create_2_1(-1, 10);
+                        var b = BigMath.lng_create_2_1(1, 10);
+                        var c = BigMath.lng_add_2_2(a, b, 10);
+
+                        result.assert(BigMath.lng_sign_2(c) === 0);
+                        result.assert(c[1] === 0);
+                        return result;
+                    },
+                    test_add_004b: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        var a = BigMath.lng_create_2_1(-2, 10);
+                        var b = BigMath.lng_create_2_1(1, 10);
+                        var c = BigMath.lng_add_2_2(a, b, 10);
+
+                        result.assert(BigMath.lng_sign_2(c) < 0);
+                        result.assert(c[1] === 1);
+                        result.assert(c[2] === 0);
+                        return result;
+                    },
+                    test_add_004c: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        var a = BigMath.lng_create_2_1(-1, 10);
+                        var b = BigMath.lng_create_2_1(2, 10);
+                        var c = BigMath.lng_add_2_2(a, b, 10);
+
+                        result.assert(BigMath.lng_sign_2(c) > 0);
+                        result.assert(c[1] === 1);
+                        result.assert(c[2] === 0);
+                        return result;
+                    },
+                    test_add_004d: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        var a = BigMath.lng_create_2_1(1, 10);
+                        var b = BigMath.lng_create_2_1(-4, 10);
+                        var c = BigMath.lng_add_2_2(a, b, 10);
+
+                        result.assert(BigMath.lng_sign_2(c) < 0);
+                        result.assert(c[1] === 3);
+                        result.assert(c[2] === 0);
+                        return result;
+                    },
+                    test_add_004e: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        var a = BigMath.lng_create_2_1(4, 10);
+                        var b = BigMath.lng_create_2_1(-1, 10);
+                        var c = BigMath.lng_add_2_2(a, b, 10);
+
+                        result.assert(BigMath.lng_sign_2(c) > 0);
+                        result.assert(c[1] === 3);
+                        result.assert(c[2] === 0);
+                        return result;
+                    },
+                    test_add_004f: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        var data = this.dataProviders.getHardDies();
+                        data.a = BigMath.lng_inv_2(data.a);
+
+                        var c = BigMath.lng_add_2_2(data.a, data.b, 10);
+
+                        result.assert(BigMath.lng_sign_2(c) > 0);
+                        result.assert(BigMath.toString(c, 10) == data.sub_str);
+                        return result;
+                    },
+                    test_add_004g: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        var data = this.dataProviders.getHardDies();
+                        data.b = BigMath.lng_inv_2(data.b);
+
+                        var c = BigMath.lng_add_2_2(data.a, data.b, 10);
+
+                        result.assert(BigMath.lng_sign_2(c) < 0);
+                        result.assert(BigMath.toString(c, 10) == '-' + data.sub_str);
+                        return result;
+                    },
+                    test_add_004h: function () {
+                        var result = new TestResult(arguments.callee.name);
+                        var data = this.dataProviders.getHardDies();
+                        data.a = BigMath.lng_inv_2(data.a);
+                        data.b = BigMath.lng_inv_2(data.b);
+
+                        var c = BigMath.lng_add_2_2(data.a, data.b, 10);
+
+                        result.assert(BigMath.lng_sign_2(c) < 0);
+                        result.assert(BigMath.toString(c, 10) == '-' + data.add_str);
+                        return result;
+                    }
+                },
+                dataProviders: {
+                    getHardDies: function () {
                         var a = BigMath.lng_create_2_1(1, 10);
                         var b = BigMath.lng_create_2_1(1, 10);
                         a[2] = 2296115080;
@@ -794,21 +934,10 @@
                         // console.log(BigMath.toString(b, 10));
                         // 1.229611508067263936856768134643503445341890141254585502677490859258305563867413623520978151
                         // 1.302476927669554287752815000278522945961334797946549089201767296826154016736741079913521187
-                        var c = BigMath.lng_add_2_2(a, b, 10);
-                        // console.log(BigMath.toString(c, 10));
 
-                        result.assert(BigMath.lng_sign_2(c) > 0);
-                        result.assert(BigMath.toString(c, 10) == '2.532088435736818224609583134922026391303224939201134591879258156084459580604154703434499338');
-                        return result;
-                    },
-                    test_add_004a: function () {
-                        var result = new TestResult(arguments.callee.name);
-                        var a = BigMath.lng_create_2_1(-1, 10);
-                        var b = BigMath.lng_create_2_1(1, 10);
-                        var c = BigMath.lng_add_2_2(a, b, 10);
-
-                        result.assert(BigMath.lng_sign_2(c) === 0);
-                        result.assert();
+                        var add_str = '2.532088435736818224609583134922026391303224939201134591879258156084459580604154703434499338';
+                        var sub_str = '0.072865419602290350896046865635019500619444656691963586524276437567848452869327456392543036';
+                        return {a: a, b: b, add_str: add_str, sub_str: sub_str}
                     }
                 },
                 execute: function() {
@@ -819,17 +948,21 @@
 
                     // Show successful
                     var successful = results.filter(function (r) {return r.result}).length;
-                    console.log('%c' + 'Passed: ' + successful, 'color: ' + (successful > 0 ? 'green' : 'red'));
+                    console.log('%c' + 'Tests passed: ' + successful, 'color: ' + (successful > 0 ? 'green' : 'red'));
 
                     // Show unsuccessful
-                    results.filter(function (r) {return !r.result})
-                        .forEach(function (r) {
-                            r.release();
-                        });
+                    var unsuccessful = results.filter(function (r) {return !r.result});
+                    if (unsuccessful.length) {
+                        console.log('%c' + 'Tests failed: ' + unsuccessful.length, 'color: red');
+                        unsuccessful.forEach(function (r) {r.release()});
+                    }
                 }
             };
 
+            var tests_time = new Date().getMilliseconds();
             new BigMathTests().execute();
+            tests_time = new Date().getMilliseconds() - tests_time;
+            console.log('%c' + 'Total time: ' + tests_time + ' ms', 'color: navy');
 
             var isMouseDown = false,
                 dragPosition = null,
