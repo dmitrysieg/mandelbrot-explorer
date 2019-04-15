@@ -32,7 +32,7 @@ BigMath.prototype = {
     },
 
     /**
-     * Support only integer numbers < this.BASE;
+     * Support only integer numbers X, abs(X) < this.BASE;
      */
     lng_create_2_1: function(b, len) {
         var result = new Array(len + 1);
