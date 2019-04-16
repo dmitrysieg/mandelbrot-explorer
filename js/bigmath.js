@@ -6,6 +6,8 @@
  * * number[2..len] - fractional part.
  *
  * Procedural style for copying it to GLSL code subsequently.
+ *
+ * All the numbers are considered immutable; functions must not mutate the numbers inside, but create new objects for new numbers.
  */
 var BigMath = function () {
 

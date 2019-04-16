@@ -26,24 +26,27 @@ var zoom = BigMath.lng_create_2_1(1, LEN);
 var translate_x = BigMath.lng_create_2_1(0, LEN);
 var translate_y = BigMath.lng_create_2_1(0, LEN);
 
+var INT_CACHE = [];
+for (var t = 0; t < 300; t++) {
+    INT_CACHE.push(BigMath.lng_create_2_1(t - 150, LEN));
+}
+
 var draw_fractal = function () {
     var draw_time = Date.now();
+
+    var view_n_zoom = BigMath.lng_mul_2_2(view_coeff, zoom, LEN);
 
     for (var i = 0; i < 300; i++) {
 
         console.log('%c' + Math.floor(100 * i / 300) + '%', 'color: navy');
-        // [-1, 1]
-        var y0 = BigMath.lng_mul_2_2(BigMath.lng_create_2_1(i - 150, LEN), view_coeff, LEN);
-        // [-zoom; zoom]
-        y0 = BigMath.lng_mul_2_2(y0, zoom, LEN);
+        var y0 = BigMath.lng_mul_2_2(INT_CACHE[i], view_n_zoom, LEN);
         y0 = BigMath.lng_add_2_2(translate_y, y0, LEN);
 
         for (var j = 0; j < 300; j++) {
 
             // console.log('%c' + Math.floor(100 * j / 300) + '%', 'color: lime');
 
-            var x0 = BigMath.lng_mul_2_2(BigMath.lng_create_2_1(j - 150, LEN), view_coeff, LEN);
-            x0 = BigMath.lng_mul_2_2(x0, zoom, LEN);
+            var x0 = BigMath.lng_mul_2_2(INT_CACHE[j], view_n_zoom, LEN);
             x0 = BigMath.lng_add_2_2(translate_x, x0, LEN);
 
             var diverged = false;
@@ -64,7 +67,7 @@ var draw_fractal = function () {
                 color = k / MAX_ITER;
 
                 var sum_sq = BigMath.lng_add_2_2(sq_x, sq_y, LEN);
-                if (BigMath.lng_cmp_2_2(sum_sq, DIVERGE_DIAM, LEN) > 0) {
+                if (sum_sq[1] >= 4) {
                     diverged = true;
                     break;
                 }
